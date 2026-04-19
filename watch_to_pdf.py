@@ -94,6 +94,7 @@ def ensure_output_path(output_root: Path, folder_name: str) -> Path:
 def open_state_connection(dry_run: bool) -> sqlite3.Connection:
     if dry_run:
         connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
         init_db(connection)
         if DB_PATH.exists():
             source = sqlite3.connect(f"{DB_PATH.resolve().as_uri()}?mode=ro", uri=True)
@@ -105,6 +106,7 @@ def open_state_connection(dry_run: bool) -> sqlite3.Connection:
         return connection
 
     connection = sqlite3.connect(DB_PATH)
+    connection.row_factory = sqlite3.Row
     init_db(connection)
     return connection
 

@@ -1,0 +1,10 @@
+[project]
+name = "watch-to-pdf"
+version = "0.1.0"
+description = "Watch folders of images and convert them to PDFs."
+requires-python = ">=3.14"
+dependencies = [
+  "click",
+  "pillow",
+  "python-dotenv",
+]

@@ -196,6 +196,30 @@ launchctl bootout gui/$(id -u) "$HOME/Library/LaunchAgents/com.example.watch-to-
 launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist"
 ```
 
+### Restart after `git pull`
+
+If you update the code with `git pull`, restart the LaunchAgent so the running process picks up the new script version:
+
+```bash
+cd "$HOME/src/images2pdf"
+git pull
+launchctl bootout gui/$(id -u) "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist" 2>/dev/null
+launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist"
+```
+
+If you changed any watcher arguments or log paths, regenerate the plist before the restart:
+
+```bash
+uv run watch_to_pdf.py \
+  --input-root "$HOME/Pictures/incoming" \
+  --output-root "$HOME/Pictures/pdfs" \
+  --write-launchd-plist "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist" \
+  --launchd-label com.example.watch-to-pdf \
+  --launchd-uv-path "$(which uv)" \
+  --launchd-stdout "$(pwd)/logs/watch-to-pdf.out.log" \
+  --launchd-stderr "$(pwd)/logs/watch-to-pdf.err.log"
+```
+
 ### Check status
 
 ```bash

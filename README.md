@@ -10,6 +10,7 @@
 - Converts the folder into one PDF
 - Resizes images to a configurable preset before PDF creation
 - Names PDFs like `YYYY-MM-DD-folder-name.pdf`
+- Reuses the same dated filename on reruns instead of creating timestamp-suffixed copies
 - Writes a `.processed_to_pdf` marker file in the source folder
 - Deletes processed folders after the configured retention window
 - Keeps state in SQLite so it can resume after restart

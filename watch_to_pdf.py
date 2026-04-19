@@ -85,21 +85,7 @@ def marker_path(folder: Path) -> Path:
 
 def ensure_output_path(output_root: Path, folder_name: str) -> Path:
     base_name = f"{date_label()}-{folder_name}"
-    candidate = output_root / f"{base_name}.pdf"
-    if not candidate.exists():
-        return candidate
-
-    stamp = timestamp_label()
-    suffixed = output_root / f"{base_name}-{stamp}.pdf"
-    if not suffixed.exists():
-        return suffixed
-
-    counter = 2
-    while True:
-        numbered = output_root / f"{base_name}-{stamp}-{counter}.pdf"
-        if not numbered.exists():
-            return numbered
-        counter += 1
+    return output_root / f"{base_name}.pdf"
 
 
 def resize_for_preset(image: Image.Image, size_preset: str) -> Image.Image:

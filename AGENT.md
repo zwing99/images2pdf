@@ -8,6 +8,8 @@ This repository is a small local utility, not a packaged library. Keep changes m
 - Configuration: CLI flags plus `.env` via `python-dotenv`
 - State: local SQLite database `watch_to_pdf.sqlite3`
 - Runtime: Python 3.14, managed with `uv`
+- Output naming: `YYYY-MM-DD-folder-name.pdf`
+- Default output sizing: `--size-preset 720p`
 
 ## Working rules
 
@@ -16,6 +18,9 @@ This repository is a small local utility, not a packaged library. Keep changes m
 - Use `pathlib` consistently.
 - Preserve Click env-var support with the `WATCHPDF_` prefix.
 - Keep stdout logging straightforward and operationally useful.
+- Preserve the current output behavior unless asked otherwise:
+  - reruns overwrite the same dated PDF filename
+  - image resizing uses standard presets `480p`, `720p`, `1080p`
 
 ## Local-state boundaries
 
@@ -28,6 +33,7 @@ This repository is a small local utility, not a packaged library. Keep changes m
 - The script can generate a LaunchAgent plist with `--write-launchd-plist`.
 - Generated plist files belong outside the repo, typically in `~/Library/LaunchAgents/`.
 - Launchd stdout/stderr logs should go under the repo-local `logs/` directory, which is gitignored.
+- If watcher arguments change, regenerate the plist and reload the LaunchAgent.
 
 ## Change discipline
 

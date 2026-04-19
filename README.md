@@ -8,6 +8,7 @@
 - Counts `.jpg` and `.jpeg` files
 - Waits for the count to stay unchanged for the configured stability window
 - Converts the folder into one PDF
+- Resizes images to a configurable preset before PDF creation
 - Names PDFs like `YYYY-MM-DD-folder-name.pdf`
 - Writes a `.processed_to_pdf` marker file in the source folder
 - Deletes processed folders after the configured retention window
@@ -58,6 +59,7 @@ Optional values:
 - `WATCHPDF_POLL_SECONDS`
 - `WATCHPDF_STABLE_SECONDS`
 - `WATCHPDF_DELETE_AFTER_HOURS`
+- `WATCHPDF_SIZE_PRESET`
 - `WATCHPDF_DRY_RUN`
 
 Example:
@@ -68,6 +70,7 @@ WATCHPDF_OUTPUT_ROOT=/Users/you/Pictures/pdfs
 WATCHPDF_POLL_SECONDS=10
 WATCHPDF_STABLE_SECONDS=60
 WATCHPDF_DELETE_AFTER_HOURS=24
+WATCHPDF_SIZE_PRESET=720p
 WATCHPDF_DRY_RUN=false
 ```
 
@@ -99,6 +102,18 @@ Keep looping with a different poll interval:
 uv run watch_to_pdf.py --poll-seconds 5 --stable-seconds 90
 ```
 
+Use a different PDF size preset:
+
+```bash
+uv run watch_to_pdf.py --size-preset 1080p
+```
+
+Available presets:
+
+- `480p`
+- `720p` (default)
+- `1080p`
+
 ## Stability timing
 
 The script only looks at the number of JPEG files in each folder.
@@ -108,6 +123,16 @@ The script only looks at the number of JPEG files in each folder.
 - Empty folders are ignored.
 
 This means the script is designed for folders that are still being filled or copied into place.
+
+## PDF size preset
+
+Before building the PDF, each image is downscaled to fit inside the selected preset while preserving aspect ratio.
+
+- `480p` fits within `854x480`
+- `720p` fits within `1280x720`
+- `1080p` fits within `1920x1080`
+
+The default is `720p`, which is a reasonable tradeoff between slide readability and file size. Use `1080p` if you want larger output files with higher detail.
 
 ## Cleanup
 
@@ -178,6 +203,7 @@ Generate the LaunchAgent plist:
 uv run watch_to_pdf.py \
   --input-root "$HOME/Pictures/incoming" \
   --output-root "$HOME/Pictures/pdfs" \
+  --size-preset 720p \
   --write-launchd-plist "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist" \
   --launchd-label com.example.watch-to-pdf \
   --launchd-uv-path "$(which uv)" \
@@ -213,6 +239,7 @@ If you changed any watcher arguments or log paths, regenerate the plist before t
 uv run watch_to_pdf.py \
   --input-root "$HOME/Pictures/incoming" \
   --output-root "$HOME/Pictures/pdfs" \
+  --size-preset 720p \
   --write-launchd-plist "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist" \
   --launchd-label com.example.watch-to-pdf \
   --launchd-uv-path "$(which uv)" \
@@ -233,4 +260,5 @@ tail -f "$(pwd)/logs/watch-to-pdf.err.log"
 - The generated plist uses `KeepAlive` and `RunAtLoad`
 - The plist sets `WorkingDirectory` to the project directory so `uv run watch_to_pdf.py` resolves correctly
 - The plist embeds the watcher arguments directly, so it does not need `.env`
+- The generated plist also captures the selected `--size-preset`
 - `logs/` and generated `*.plist` files are gitignored in this repo

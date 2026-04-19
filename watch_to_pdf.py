@@ -21,6 +21,11 @@ load_dotenv()
 DB_PATH = Path(__file__).resolve().with_name("watch_to_pdf.sqlite3")
 MARKER_NAME = ".processed_to_pdf"
 IMAGE_SUFFIXES = {".jpg", ".jpeg"}
+SIZE_PRESETS: dict[str, tuple[int, int]] = {
+    "480p": (854, 480),
+    "720p": (1280, 720),
+    "1080p": (1920, 1080),
+}
 
 
 @dataclass(slots=True)
@@ -95,6 +100,18 @@ def ensure_output_path(output_root: Path, folder_name: str) -> Path:
         if not numbered.exists():
             return numbered
         counter += 1
+
+
+def resize_for_preset(image: Image.Image, size_preset: str) -> Image.Image:
+    max_width, max_height = SIZE_PRESETS[size_preset]
+    width, height = image.size
+    scale = min(max_width / width, max_height / height, 1.0)
+    if scale >= 1.0:
+        return image.copy()
+
+    resized_width = max(1, round(width * scale))
+    resized_height = max(1, round(height * scale))
+    return image.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
 
 
 def open_state_connection(dry_run: bool) -> sqlite3.Connection:
@@ -282,7 +299,13 @@ def mark_deleted(connection: sqlite3.Connection, folder: Path) -> None:
     connection.commit()
 
 
-def process_folder_images(folder: Path, images: list[Path], output_path: Path, dry_run: bool) -> None:
+def process_folder_images(
+    folder: Path,
+    images: list[Path],
+    output_path: Path,
+    dry_run: bool,
+    size_preset: str,
+) -> None:
     if dry_run:
         return
 
@@ -290,7 +313,7 @@ def process_folder_images(folder: Path, images: list[Path], output_path: Path, d
     try:
         for image_path in images:
             with Image.open(image_path) as image:
-                converted_images.append(image.convert("RGB"))
+                converted_images.append(resize_for_preset(image.convert("RGB"), size_preset))
 
         first_image = converted_images[0]
         first_image.save(
@@ -344,6 +367,7 @@ def build_launchd_plist(
     poll_seconds: int,
     stable_seconds: int,
     delete_after_hours: float,
+    size_preset: str,
     dry_run: bool,
     stdout_path: Path,
     stderr_path: Path,
@@ -362,6 +386,8 @@ def build_launchd_plist(
         str(stable_seconds),
         "--delete-after-hours",
         str(delete_after_hours),
+        "--size-preset",
+        size_preset,
     ]
     command.append("--dry-run" if dry_run else "--no-dry-run")
     command.append("--loop")
@@ -388,6 +414,7 @@ def write_launchd_plist_file(
     poll_seconds: int,
     stable_seconds: int,
     delete_after_hours: float,
+    size_preset: str,
     dry_run: bool,
     stdout_path: Path,
     stderr_path: Path,
@@ -407,6 +434,7 @@ def write_launchd_plist_file(
         poll_seconds=poll_seconds,
         stable_seconds=stable_seconds,
         delete_after_hours=delete_after_hours,
+        size_preset=size_preset,
         dry_run=dry_run,
         stdout_path=stdout_path,
         stderr_path=stderr_path,
@@ -421,6 +449,7 @@ def scan_folders(
     *,
     stable_seconds: int,
     delete_after_hours: float,
+    size_preset: str,
     dry_run: bool,
     logger: logging.Logger,
 ) -> None:
@@ -471,7 +500,7 @@ def scan_folders(
             try:
                 mark_processing(connection, folder)
                 output_path = ensure_output_path(output_root, folder.name)
-                process_folder_images(folder, images, output_path, dry_run)
+                process_folder_images(folder, images, output_path, dry_run, size_preset)
                 write_marker(folder, output_path, dry_run)
                 mark_done(connection, folder, image_count, now_ts(), delete_after_hours, output_path)
                 logger.info("Finished %s -> %s", folder, output_path)
@@ -561,6 +590,15 @@ def cleanup_folders(
     help="How long to keep successfully processed folders before deleting them.",
 )
 @click.option(
+    "--size-preset",
+    type=click.Choice(sorted(SIZE_PRESETS), case_sensitive=False),
+    default="720p",
+    show_default=True,
+    envvar="WATCHPDF_SIZE_PRESET",
+    show_envvar=True,
+    help="Resize images before PDF creation using a standard target resolution.",
+)
+@click.option(
     "--dry-run/--no-dry-run",
     default=False,
     envvar="WATCHPDF_DRY_RUN",
@@ -609,6 +647,7 @@ def main(
     poll_seconds: int,
     stable_seconds: int,
     delete_after_hours: float,
+    size_preset: str,
     dry_run: bool,
     once: bool,
     write_launchd_plist: Path | None,
@@ -618,6 +657,7 @@ def main(
     launchd_stderr: Path,
 ) -> None:
     logger = configure_logging()
+    size_preset = size_preset.lower()
     if input_root is None:
         raise click.ClickException("--input-root or WATCHPDF_INPUT_ROOT is required")
     if output_root is None:
@@ -638,6 +678,7 @@ def main(
             poll_seconds=poll_seconds,
             stable_seconds=stable_seconds,
             delete_after_hours=delete_after_hours,
+            size_preset=size_preset,
             dry_run=dry_run,
             stdout_path=launchd_stdout.expanduser(),
             stderr_path=launchd_stderr.expanduser(),
@@ -658,6 +699,7 @@ def main(
     logger.info("Watching %s", input_root)
     logger.info("Writing PDFs to %s", output_root)
     logger.info("Database: %s", DB_PATH)
+    logger.info("Size preset: %s (%sx%s)", size_preset, *SIZE_PRESETS[size_preset])
 
     try:
         while True:
@@ -667,6 +709,7 @@ def main(
                 output_root,
                 stable_seconds=stable_seconds,
                 delete_after_hours=delete_after_hours,
+                size_preset=size_preset,
                 dry_run=dry_run,
                 logger=logger,
             )

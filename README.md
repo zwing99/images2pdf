@@ -8,6 +8,7 @@
 - Counts `.jpg` and `.jpeg` files
 - Waits for the count to stay unchanged for the configured stability window
 - Converts the folder into one PDF
+- Names PDFs like `YYYY-MM-DD-folder-name.pdf`
 - Writes a `.processed_to_pdf` marker file in the source folder
 - Deletes processed folders after the configured retention window
 - Keeps state in SQLite so it can resume after restart
@@ -156,50 +157,56 @@ uv run watch_to_pdf.py
 
 `launchd` is the right way to keep this watcher running across logins and reboots on macOS. Use a per-user `LaunchAgent` unless you specifically need a system-wide daemon.
 
-### Generate the plist
+### Recommended setup
 
-The script can generate the plist for you:
+This is the setup pattern used for this project:
+
+- Keep the generated plist outside the repo in `~/Library/LaunchAgents/`
+- Keep `launchd` logs inside the repo in `logs/`
+- Let the script generate the plist so the command arguments stay correct
+
+Create the repo-local log directory first:
+
+```bash
+cd "$HOME/src/images2pdf"
+mkdir -p logs
+```
+
+Generate the LaunchAgent plist:
 
 ```bash
 uv run watch_to_pdf.py \
-  --input-root /Users/you/Pictures/incoming \
-  --output-root /Users/you/Pictures/pdfs \
-  --write-launchd-plist ~/Library/LaunchAgents/com.example.watch-to-pdf.plist
+  --input-root "$HOME/Pictures/incoming" \
+  --output-root "$HOME/Pictures/pdfs" \
+  --write-launchd-plist "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist" \
+  --launchd-label com.example.watch-to-pdf \
+  --launchd-uv-path "$(which uv)" \
+  --launchd-stdout "$(pwd)/logs/watch-to-pdf.out.log" \
+  --launchd-stderr "$(pwd)/logs/watch-to-pdf.err.log"
 ```
 
-Optional launchd-specific flags:
+Run that command from the project directory so `$(pwd)` points at the repo you want to manage.
 
-- `--launchd-label com.example.watch-to-pdf`
-- `--launchd-uv-path /opt/homebrew/bin/uv`
-- `--launchd-stdout /tmp/watch-to-pdf.out.log`
-- `--launchd-stderr /tmp/watch-to-pdf.err.log`
+### Load or reload it
 
-If `uv` is not on a standard path for `launchd`, set `--launchd-uv-path` explicitly.
-
-### Load it
+Use `bootout` and `bootstrap` so updates to the plist are picked up cleanly:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.example.watch-to-pdf.plist 2>/dev/null
-launchctl load ~/Library/LaunchAgents/com.example.watch-to-pdf.plist
-```
-
-On newer macOS versions, this also works and is often clearer:
-
-```bash
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.example.watch-to-pdf.plist 2>/dev/null
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.watch-to-pdf.plist
+launchctl bootout gui/$(id -u) "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist" 2>/dev/null
+launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist"
 ```
 
 ### Check status
 
 ```bash
-launchctl list | grep watch-to-pdf
-tail -f /tmp/watch-to-pdf.out.log
-tail -f /tmp/watch-to-pdf.err.log
+launchctl list | grep com.example.watch-to-pdf
+tail -f "$(pwd)/logs/watch-to-pdf.out.log"
+tail -f "$(pwd)/logs/watch-to-pdf.err.log"
 ```
 
 ### Notes
 
-- The generated plist uses `KeepAlive` and `RunAtLoad`.
-- It sets `WorkingDirectory` to this project directory so `uv run watch_to_pdf.py` resolves correctly.
-- The plist embeds the watcher arguments directly, so you can run it without relying on `.env`.
+- The generated plist uses `KeepAlive` and `RunAtLoad`
+- The plist sets `WorkingDirectory` to the project directory so `uv run watch_to_pdf.py` resolves correctly
+- The plist embeds the watcher arguments directly, so it does not need `.env`
+- `logs/` and generated `*.plist` files are gitignored in this repo

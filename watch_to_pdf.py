@@ -57,6 +57,11 @@ def timestamp_label(ts: float | None = None) -> str:
     return moment.astimezone().strftime("%Y%m%d-%H%M%S")
 
 
+def date_label(ts: float | None = None) -> str:
+    moment = datetime.fromtimestamp(ts if ts is not None else now_ts(), tz=timezone.utc)
+    return moment.astimezone().strftime("%Y-%m-%d")
+
+
 def natural_key(path: Path) -> list[object]:
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", path.name)]
 
@@ -74,18 +79,19 @@ def marker_path(folder: Path) -> Path:
 
 
 def ensure_output_path(output_root: Path, folder_name: str) -> Path:
-    candidate = output_root / f"{folder_name}.pdf"
+    base_name = f"{date_label()}-{folder_name}"
+    candidate = output_root / f"{base_name}.pdf"
     if not candidate.exists():
         return candidate
 
     stamp = timestamp_label()
-    suffixed = output_root / f"{folder_name}-{stamp}.pdf"
+    suffixed = output_root / f"{base_name}-{stamp}.pdf"
     if not suffixed.exists():
         return suffixed
 
     counter = 2
     while True:
-        numbered = output_root / f"{folder_name}-{stamp}-{counter}.pdf"
+        numbered = output_root / f"{base_name}-{stamp}-{counter}.pdf"
         if not numbered.exists():
             return numbered
         counter += 1

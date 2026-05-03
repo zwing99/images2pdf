@@ -18,7 +18,7 @@ from PIL import Image
 
 load_dotenv()
 
-DB_PATH = Path(__file__).resolve().with_name("watch_to_pdf.sqlite3")
+DEFAULT_DB_PATH = Path(__file__).resolve().with_name("watch_to_pdf.sqlite3")
 MARKER_NAME = ".processed_to_pdf"
 IMAGE_SUFFIXES = {".jpg", ".jpeg"}
 SIZE_PRESETS: dict[str, tuple[int, int]] = {
@@ -26,6 +26,7 @@ SIZE_PRESETS: dict[str, tuple[int, int]] = {
     "720p": (1280, 720),
     "1080p": (1920, 1080),
 }
+LOGGER_NAME = "watch_to_pdf"
 
 
 @dataclass(slots=True)
@@ -41,16 +42,14 @@ class FolderState:
 
 
 def configure_logging() -> logging.Logger:
-    logger = logging.getLogger("watch_to_pdf")
-    logger.setLevel(logging.INFO)
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        stream=sys.stdout,
+        force=True,
     )
-    logger.handlers.clear()
-    logger.addHandler(handler)
-    logger.propagate = False
-    return logger
+    return logging.getLogger(LOGGER_NAME)
 
 
 def now_ts() -> float:
@@ -100,13 +99,13 @@ def resize_for_preset(image: Image.Image, size_preset: str) -> Image.Image:
     return image.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
 
 
-def open_state_connection(dry_run: bool) -> sqlite3.Connection:
+def open_state_connection(dry_run: bool, db_path: Path) -> sqlite3.Connection:
     if dry_run:
         connection = sqlite3.connect(":memory:")
         connection.row_factory = sqlite3.Row
         init_db(connection)
-        if DB_PATH.exists():
-            source = sqlite3.connect(f"{DB_PATH.resolve().as_uri()}?mode=ro", uri=True)
+        if db_path.exists():
+            source = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
             try:
                 source.row_factory = sqlite3.Row
                 copy_existing_state(source, connection)
@@ -114,7 +113,8 @@ def open_state_connection(dry_run: bool) -> sqlite3.Connection:
                 source.close()
         return connection
 
-    connection = sqlite3.connect(DB_PATH)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
     init_db(connection)
     return connection
@@ -350,6 +350,7 @@ def build_launchd_plist(
     uv_path: str,
     input_root: Path,
     output_root: Path,
+    db_path: Path | None,
     poll_seconds: int,
     stable_seconds: int,
     delete_after_hours: float,
@@ -362,10 +363,21 @@ def build_launchd_plist(
         uv_path,
         "run",
         "watch_to_pdf.py",
+        "start-watch",
         "--input-root",
         str(input_root),
         "--output-root",
         str(output_root),
+    ]
+    if db_path is not None:
+        command.extend(
+            [
+                "--db-path",
+                str(db_path),
+            ]
+        )
+    command.extend(
+        [
         "--poll-seconds",
         str(poll_seconds),
         "--stable-seconds",
@@ -374,7 +386,8 @@ def build_launchd_plist(
         str(delete_after_hours),
         "--size-preset",
         size_preset,
-    ]
+        ]
+    )
     command.append("--dry-run" if dry_run else "--no-dry-run")
     command.append("--loop")
 
@@ -397,6 +410,7 @@ def write_launchd_plist_file(
     uv_path: str,
     input_root: Path,
     output_root: Path,
+    db_path: Path | None,
     poll_seconds: int,
     stable_seconds: int,
     delete_after_hours: float,
@@ -417,6 +431,7 @@ def write_launchd_plist_file(
         uv_path=uv_path,
         input_root=input_root,
         output_root=output_root,
+        db_path=db_path,
         poll_seconds=poll_seconds,
         stable_seconds=stable_seconds,
         delete_after_hours=delete_after_hours,
@@ -533,57 +548,80 @@ def cleanup_folders(
             logger.info("Processed folder has no delete timer, leaving in place: %s", folder)
 
 
-@click.command()
-@click.option(
-    "--input-root",
-    type=click.Path(path_type=Path, exists=True, file_okay=False, dir_okay=True, readable=True),
-    envvar="WATCHPDF_INPUT_ROOT",
-    show_envvar=True,
-    help="Directory whose immediate subfolders are watched for JPEGs.",
-)
-@click.option(
-    "--output-root",
-    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
-    envvar="WATCHPDF_OUTPUT_ROOT",
-    show_envvar=True,
-    help="Directory where generated PDFs are written.",
-)
-@click.option(
-    "--poll-seconds",
-    type=click.IntRange(min=1),
-    default=10,
-    show_default=True,
-    envvar="WATCHPDF_POLL_SECONDS",
-    show_envvar=True,
-    help="How long to sleep between scans.",
-)
-@click.option(
-    "--stable-seconds",
-    type=click.IntRange(min=1),
-    default=60,
-    show_default=True,
-    envvar="WATCHPDF_STABLE_SECONDS",
-    show_envvar=True,
-    help="How long the JPEG count must stay unchanged before processing.",
-)
-@click.option(
-    "--delete-after-hours",
-    type=click.FloatRange(min=0.0),
-    default=24.0,
-    show_default=True,
-    envvar="WATCHPDF_DELETE_AFTER_HOURS",
-    show_envvar=True,
-    help="How long to keep successfully processed folders before deleting them.",
-)
-@click.option(
-    "--size-preset",
-    type=click.Choice(sorted(SIZE_PRESETS), case_sensitive=False),
-    default="720p",
-    show_default=True,
-    envvar="WATCHPDF_SIZE_PRESET",
-    show_envvar=True,
-    help="Resize images before PDF creation using a standard target resolution.",
-)
+def common_watch_options(function: click.Command) -> click.Command:
+    options = [
+        click.option(
+            "--input-root",
+            type=click.Path(path_type=Path, exists=True, file_okay=False, dir_okay=True, readable=True),
+            envvar="WATCHPDF_INPUT_ROOT",
+            show_envvar=True,
+            required=True,
+            help="Directory whose immediate subfolders are watched for JPEGs.",
+        ),
+        click.option(
+            "--output-root",
+            type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+            envvar="WATCHPDF_OUTPUT_ROOT",
+            show_envvar=True,
+            required=True,
+            help="Directory where generated PDFs are written.",
+        ),
+        click.option(
+            "--db-path",
+            type=click.Path(path_type=Path, dir_okay=False),
+            envvar="WATCHPDF_DB_PATH",
+            show_envvar=True,
+            help="SQLite database path. Defaults to watch_to_pdf.sqlite3 next to the script.",
+        ),
+        click.option(
+            "--poll-seconds",
+            type=click.IntRange(min=1),
+            default=10,
+            show_default=True,
+            envvar="WATCHPDF_POLL_SECONDS",
+            show_envvar=True,
+            help="How long to sleep between scans.",
+        ),
+        click.option(
+            "--stable-seconds",
+            type=click.IntRange(min=1),
+            default=60,
+            show_default=True,
+            envvar="WATCHPDF_STABLE_SECONDS",
+            show_envvar=True,
+            help="How long the JPEG count must stay unchanged before processing.",
+        ),
+        click.option(
+            "--delete-after-hours",
+            type=click.FloatRange(min=0.0),
+            default=24.0,
+            show_default=True,
+            envvar="WATCHPDF_DELETE_AFTER_HOURS",
+            show_envvar=True,
+            help="How long to keep successfully processed folders before deleting them.",
+        ),
+        click.option(
+            "--size-preset",
+            type=click.Choice(sorted(SIZE_PRESETS), case_sensitive=False),
+            default="720p",
+            show_default=True,
+            envvar="WATCHPDF_SIZE_PRESET",
+            show_envvar=True,
+            help="Resize images before PDF creation using a standard target resolution.",
+        ),
+    ]
+    for option in reversed(options):
+        function = option(function)
+    return function
+
+
+@click.group()
+def main() -> None:
+    """Watch folders of JPEGs and build PDFs."""
+
+
+@main.command("start-watch")
+@common_watch_options
 @click.option(
     "--dry-run/--no-dry-run",
     default=False,
@@ -596,10 +634,74 @@ def cleanup_folders(
     default=False,
     help="Run one scan pass and exit instead of looping forever.",
 )
+def start_watch(
+    input_root: Path | None,
+    output_root: Path | None,
+    db_path: Path | None,
+    poll_seconds: int,
+    stable_seconds: int,
+    delete_after_hours: float,
+    size_preset: str,
+    dry_run: bool,
+    once: bool,
+) -> None:
+    logger = configure_logging()
+    size_preset = size_preset.lower()
+
+    input_root = input_root.expanduser().resolve()
+    output_root = output_root.expanduser().resolve()
+    db_path = db_path.expanduser().resolve() if db_path is not None else DEFAULT_DB_PATH
+
+    if not input_root.is_dir():
+        raise click.ClickException(f"Input root does not exist or is not a directory: {input_root}")
+
+    if dry_run:
+        logger.info("Dry-run mode enabled")
+        connection = open_state_connection(True, db_path)
+    else:
+        output_root.mkdir(parents=True, exist_ok=True)
+        connection = open_state_connection(False, db_path)
+
+    logger.info("Watching %s", input_root)
+    logger.info("Writing PDFs to %s", output_root)
+    logger.info("Database: %s", db_path)
+    logger.info("Size preset: %s (%sx%s)", size_preset, *SIZE_PRESETS[size_preset])
+
+    try:
+        while True:
+            scan_folders(
+                connection,
+                input_root,
+                output_root,
+                stable_seconds=stable_seconds,
+                delete_after_hours=delete_after_hours,
+                size_preset=size_preset,
+                dry_run=dry_run,
+                logger=logger,
+            )
+            if once:
+                break
+            time.sleep(poll_seconds)
+    except KeyboardInterrupt:
+        logger.info("Stopped")
+    finally:
+        connection.close()
+
+
+@main.command("build-plist")
+@common_watch_options
 @click.option(
-    "--write-launchd-plist",
+    "--dry-run/--no-dry-run",
+    default=False,
+    envvar="WATCHPDF_DRY_RUN",
+    show_envvar=True,
+    help="Embed dry-run mode in the generated launchd plist.",
+)
+@click.option(
+    "--plist-path",
     type=click.Path(path_type=Path, dir_okay=False),
-    help="Write a launchd plist for this watcher and exit.",
+    required=True,
+    help="Destination path for the generated launchd plist.",
 )
 @click.option(
     "--launchd-label",
@@ -627,86 +729,51 @@ def cleanup_folders(
     show_default=True,
     help="launchd stderr log path for the generated plist.",
 )
-def main(
-    input_root: Path | None,
-    output_root: Path | None,
+def build_plist(
+    input_root: Path,
+    output_root: Path,
+    db_path: Path | None,
     poll_seconds: int,
     stable_seconds: int,
     delete_after_hours: float,
     size_preset: str,
     dry_run: bool,
-    once: bool,
-    write_launchd_plist: Path | None,
+    plist_path: Path,
     launchd_label: str,
     launchd_uv_path: str,
     launchd_stdout: Path,
     launchd_stderr: Path,
 ) -> None:
-    logger = configure_logging()
     size_preset = size_preset.lower()
-    if input_root is None:
-        raise click.ClickException("--input-root or WATCHPDF_INPUT_ROOT is required")
-    if output_root is None:
-        raise click.ClickException("--output-root or WATCHPDF_OUTPUT_ROOT is required")
-
     input_root = input_root.expanduser().resolve()
     output_root = output_root.expanduser().resolve()
-
-    if write_launchd_plist is not None:
-        if not input_root.is_dir():
-            raise click.ClickException(f"Input root does not exist or is not a directory: {input_root}")
-        write_launchd_plist_file(
-            write_launchd_plist,
-            label=launchd_label,
-            uv_path=launchd_uv_path,
-            input_root=input_root,
-            output_root=output_root,
-            poll_seconds=poll_seconds,
-            stable_seconds=stable_seconds,
-            delete_after_hours=delete_after_hours,
-            size_preset=size_preset,
-            dry_run=dry_run,
-            stdout_path=launchd_stdout.expanduser(),
-            stderr_path=launchd_stderr.expanduser(),
-        )
-        click.echo(f"Wrote launchd plist to {write_launchd_plist.expanduser().resolve()}")
-        return
+    db_path = db_path.expanduser().resolve() if db_path is not None else DEFAULT_DB_PATH
 
     if not input_root.is_dir():
         raise click.ClickException(f"Input root does not exist or is not a directory: {input_root}")
 
-    if dry_run:
-        logger.info("Dry-run mode enabled")
-        connection = open_state_connection(True)
-    else:
-        output_root.mkdir(parents=True, exist_ok=True)
-        connection = open_state_connection(False)
-
-    logger.info("Watching %s", input_root)
-    logger.info("Writing PDFs to %s", output_root)
-    logger.info("Database: %s", DB_PATH)
-    logger.info("Size preset: %s (%sx%s)", size_preset, *SIZE_PRESETS[size_preset])
-
-    try:
-        while True:
-            scan_folders(
-                connection,
-                input_root,
-                output_root,
-                stable_seconds=stable_seconds,
-                delete_after_hours=delete_after_hours,
-                size_preset=size_preset,
-                dry_run=dry_run,
-                logger=logger,
-            )
-            if once:
-                break
-            time.sleep(poll_seconds)
-    except KeyboardInterrupt:
-        logger.info("Stopped")
-    finally:
-        connection.close()
+    write_launchd_plist_file(
+        plist_path,
+        label=launchd_label,
+        uv_path=launchd_uv_path,
+        input_root=input_root,
+        output_root=output_root,
+        db_path=db_path,
+        poll_seconds=poll_seconds,
+        stable_seconds=stable_seconds,
+        delete_after_hours=delete_after_hours,
+        size_preset=size_preset,
+        dry_run=dry_run,
+        stdout_path=launchd_stdout.expanduser(),
+        stderr_path=launchd_stderr.expanduser(),
+    )
+    click.echo(f"Wrote launchd plist to {plist_path.expanduser().resolve()}")
 
 
 if __name__ == "__main__":
-    main()
+    configure_logging()
+    try:
+        main()
+    except Exception:  # noqa: BLE001
+        logging.getLogger(LOGGER_NAME).exception("Unhandled exception")
+        raise

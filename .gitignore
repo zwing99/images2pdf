@@ -176,9 +176,6 @@ tags
 # Persistent undo
 [._]*.un~
 
-### VS Code ###
-.vscode/
-
 .env
 watch_to_pdf.sqlite3
 *.sqlite3

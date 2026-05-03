@@ -1,0 +1,9 @@
+{
+    "spellright.language": [],
+    "spellright.documentTypes": [
+        "plantuml",
+        ".puml",
+        "latex",
+        "plaintext"
+    ]
+}

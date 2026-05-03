@@ -2,7 +2,7 @@
 name = "watch-to-pdf"
 version = "0.1.0"
 description = "Watch folders of images and convert them to PDFs."
-requires-python = ">=3.14"
+requires-python = ">=3.14,<3.15"
 dependencies = [
   "click",
   "pillow",

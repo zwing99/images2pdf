@@ -34,10 +34,30 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 Restart your shell if needed so `uv` is on `PATH`.
 
+## Python with `uv`
+
+This project targets Python `3.14.x`.
+
+Recommended setup:
+
+```bash
+uv python install 3.14
+```
+
+Then run the script with a uv-managed interpreter:
+
+```bash
+uv run --managed-python watch_to_pdf.py start-watch
+```
+
+By default, `uv` can automatically download a missing Python version when needed. In practice, if the project requires Python `3.14` and you do not already have a suitable interpreter, `uv` will usually fetch it for you and continue.
+
+If you want to force `uv` to use only uv-managed Python installations and never fall back to a system Python, use `--managed-python`.
+
 ## Run
 
 ```bash
-uv run watch_to_pdf.py
+uv run watch_to_pdf.py start-watch
 ```
 
 The script reads configuration from CLI flags and from `.env`.
@@ -60,6 +80,7 @@ Optional values:
 - `WATCHPDF_POLL_SECONDS`
 - `WATCHPDF_STABLE_SECONDS`
 - `WATCHPDF_DELETE_AFTER_HOURS`
+- `WATCHPDF_DB_PATH`
 - `WATCHPDF_SIZE_PRESET`
 - `WATCHPDF_DRY_RUN`
 
@@ -68,6 +89,7 @@ Example:
 ```env
 WATCHPDF_INPUT_ROOT=/Users/you/Pictures/incoming
 WATCHPDF_OUTPUT_ROOT=/Users/you/Pictures/pdfs
+WATCHPDF_DB_PATH=
 WATCHPDF_POLL_SECONDS=10
 WATCHPDF_STABLE_SECONDS=60
 WATCHPDF_DELETE_AFTER_HOURS=24
@@ -80,33 +102,34 @@ WATCHPDF_DRY_RUN=false
 Run once and exit:
 
 ```bash
-uv run watch_to_pdf.py --once
+uv run --managed-python watch_to_pdf.py start-watch --once
 ```
 
 Override paths on the command line:
 
 ```bash
-uv run watch_to_pdf.py \
+uv run --managed-python watch_to_pdf.py start-watch \
   --input-root /path/to/incoming \
+  --db-path /path/to/watch_to_pdf.sqlite3 \
   --output-root /path/to/output
 ```
 
 Dry run:
 
 ```bash
-uv run watch_to_pdf.py --dry-run --once
+uv run --managed-python watch_to_pdf.py start-watch --dry-run --once
 ```
 
 Keep looping with a different poll interval:
 
 ```bash
-uv run watch_to_pdf.py --poll-seconds 5 --stable-seconds 90
+uv run --managed-python watch_to_pdf.py start-watch --poll-seconds 5 --stable-seconds 90
 ```
 
 Use a different PDF size preset:
 
 ```bash
-uv run watch_to_pdf.py --size-preset 1080p
+uv run --managed-python watch_to_pdf.py start-watch --size-preset 1080p
 ```
 
 Available presets:
@@ -135,6 +158,18 @@ Before building the PDF, each image is downscaled to fit inside the selected pre
 
 The default is `720p`, which is a reasonable tradeoff between slide readability and file size. Use `1080p` if you want larger output files with higher detail.
 
+## SQLite database path
+
+By default, the watcher stores state in:
+
+```text
+watch_to_pdf.sqlite3
+```
+
+next to `watch_to_pdf.py`.
+
+You can override that with `--db-path` or `WATCHPDF_DB_PATH` if you want the state file somewhere else.
+
 ## Cleanup
 
 After a folder is successfully converted:
@@ -147,13 +182,7 @@ The default retention is 24 hours.
 
 ## SQLite database
 
-The database lives next to the script:
-
-```text
-watch_to_pdf.sqlite3
-```
-
-It is ignored by git and survives restarts so the watcher can continue from previous state.
+The SQLite database is ignored by git and survives restarts so the watcher can continue from previous state.
 
 ## Debug logs
 
@@ -176,7 +205,7 @@ chmod +x watch_to_pdf.py
 After that you can still run it with:
 
 ```bash
-uv run watch_to_pdf.py
+uv run watch_to_pdf.py start-watch
 ```
 
 ## macOS launchd
@@ -201,12 +230,12 @@ mkdir -p logs
 Generate the LaunchAgent plist:
 
 ```bash
-uv run watch_to_pdf.py \
+uv run --managed-python watch_to_pdf.py build-plist \
   --input-root "$HOME/Pictures/incoming" \
   --output-root "$HOME/Pictures/pdfs" \
   --size-preset 720p \
-  --write-launchd-plist "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist" \
-  --launchd-label com.example.watch-to-pdf \
+  --plist-path "$HOME/Library/LaunchAgents/com.zwing99.watch-to-pdf.plist" \
+  --launchd-label com.zwing99.watch-to-pdf \
   --launchd-uv-path "$(which uv)" \
   --launchd-stdout "$(pwd)/logs/watch-to-pdf.out.log" \
   --launchd-stderr "$(pwd)/logs/watch-to-pdf.err.log"
@@ -219,8 +248,8 @@ Run that command from the project directory so `$(pwd)` points at the repo you w
 Use `bootout` and `bootstrap` so updates to the plist are picked up cleanly:
 
 ```bash
-launchctl bootout gui/$(id -u) "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist" 2>/dev/null
-launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist"
+launchctl bootout gui/$(id -u) "$HOME/Library/LaunchAgents/com.zwing99.watch-to-pdf.plist" 2>/dev/null
+launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/com.zwing99.watch-to-pdf.plist"
 ```
 
 ### Restart after `git pull`
@@ -230,19 +259,19 @@ If you update the code with `git pull`, restart the LaunchAgent so the running p
 ```bash
 cd "$HOME/src/images2pdf"
 git pull
-launchctl bootout gui/$(id -u) "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist" 2>/dev/null
-launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist"
+launchctl bootout gui/$(id -u) "$HOME/Library/LaunchAgents/com.zwing99.watch-to-pdf.plist" 2>/dev/null
+launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/com.zwing99.watch-to-pdf.plist"
 ```
 
 If you changed any watcher arguments or log paths, regenerate the plist before the restart:
 
 ```bash
-uv run watch_to_pdf.py \
+uv run --managed-python watch_to_pdf.py build-plist \
   --input-root "$HOME/Pictures/incoming" \
   --output-root "$HOME/Pictures/pdfs" \
   --size-preset 720p \
-  --write-launchd-plist "$HOME/Library/LaunchAgents/com.example.watch-to-pdf.plist" \
-  --launchd-label com.example.watch-to-pdf \
+  --plist-path "$HOME/Library/LaunchAgents/com.zwing99.watch-to-pdf.plist" \
+  --launchd-label com.zwing99.watch-to-pdf \
   --launchd-uv-path "$(which uv)" \
   --launchd-stdout "$(pwd)/logs/watch-to-pdf.out.log" \
   --launchd-stderr "$(pwd)/logs/watch-to-pdf.err.log"
@@ -251,7 +280,7 @@ uv run watch_to_pdf.py \
 ### Check status
 
 ```bash
-launchctl list | grep com.example.watch-to-pdf
+launchctl list | grep com.zwing99.watch-to-pdf
 tail -f "$(pwd)/logs/watch-to-pdf.out.log"
 tail -f "$(pwd)/logs/watch-to-pdf.err.log"
 ```
@@ -260,6 +289,9 @@ tail -f "$(pwd)/logs/watch-to-pdf.err.log"
 
 - The generated plist uses `KeepAlive` and `RunAtLoad`
 - The plist sets `WorkingDirectory` to the project directory so `uv run watch_to_pdf.py` resolves correctly
+- The generated plist runs `watch_to_pdf.py start-watch`
 - The plist embeds the watcher arguments directly, so it does not need `.env`
 - The generated plist also captures the selected `--size-preset`
+- Logging stays on standard output and standard error; `launchd` redirects those streams to the configured log files
+- Future improvement: switch the log files to a rotated logging strategy if they grow too large over time
 - `logs/` and generated `*.plist` files are gitignored in this repo
